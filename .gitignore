@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+
+# Секреты и локальные данные
+.env
+data/uploads/
+data/generated/
+data/*.db
+*.log
+
+# Редакторы и система
+.idea/
+.vscode/
+Thumbs.db
+.DS_Store

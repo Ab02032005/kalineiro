@@ -1,0 +1,28 @@
+# Локальный стек Kali. Запуск: docker compose -f infra/docker-compose.yml up --build
+# На этапе 2 поднимается только backend. Postgres, Redis и Qdrant добавятся на этапах 4–5.
+
+services:
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    image: kali-backend:dev
+    ports:
+      - "127.0.0.1:8000:8000"   # наружу только на localhost
+    env_file:
+      - ../.env
+    environment:
+      # Эти значения важнее .env: внутри контейнера сервер должен слушать все адреса
+      KALI_HOST: 0.0.0.0
+      KALI_PORT: 8000
+      KALI_ENVIRONMENT: ${KALI_ENVIRONMENT:-dev}
+    volumes:
+      - ../data:/app/data
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
