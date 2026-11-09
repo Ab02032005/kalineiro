@@ -1,8 +1,9 @@
-"""Фабрика FastAPI-приложения Kali: сборка провайдеров, ядра и маршрутов."""
+"""Фабрика FastAPI-приложения Kali: сборка провайдеров, памяти, ядра и маршрутов."""
 
 from __future__ import annotations
 
 import logging
+import os
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -13,8 +14,11 @@ from fastapi.responses import JSONResponse
 
 from kali import __version__
 from kali.api.chat import router as chat_router
+from kali.api.memory import router as memory_router
 from kali.config.settings import Settings, get_settings
 from kali.core.engine import CoreEngine, EngineLimits
+from kali.memory.service import MemoryService
+from kali.memory.store import SqliteMemoryStore
 from kali.models.openai_compatible import OpenAICompatibleProvider
 from kali.models.registry import ProviderRegistry
 from kali.observability.logging import configure_logging
@@ -39,19 +43,40 @@ def build_registry(settings: Settings) -> ProviderRegistry:
     return registry
 
 
+def build_memory(settings: Settings) -> tuple[SqliteMemoryStore, MemoryService]:
+    """Открывает базу памяти. Для ':memory:' база живёт только в процессе (тесты)."""
+    path = settings.database_path
+    if path != ":memory:":
+        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    store = SqliteMemoryStore(path)
+    service = MemoryService(
+        store,
+        context_limit=settings.memory_context_limit,
+        enabled=settings.memory_enabled,
+    )
+    return store, service
+
+
 def create_app(
     settings: Settings | None = None,
     registry: ProviderRegistry | None = None,
+    memory: MemoryService | None = None,
 ) -> FastAPI:
-    """Создаёт приложение. В тестах можно передать свой реестр провайдеров."""
+    """Создаёт приложение. В тестах можно передать свои реестр провайдеров и память."""
     settings = settings or get_settings()
     configure_logging(settings.log_level)
     registry = registry if registry is not None else build_registry(settings)
+
+    owned_store: SqliteMemoryStore | None = None
+    if memory is None:
+        owned_store, memory = build_memory(settings)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
         await registry.close_all()
+        if owned_store is not None:
+            owned_store.close()
 
     app = FastAPI(
         title=settings.app_name,
@@ -63,12 +88,17 @@ def create_app(
     )
     app.state.settings = settings
     app.state.registry = registry
+    app.state.memory = memory
     app.state.engine = (
         CoreEngine(
             registry,
             system_prompt=settings.system_prompt,
             default_model=settings.default_model,
-            limits=EngineLimits(max_input_chars=settings.max_input_chars),
+            limits=EngineLimits(
+                max_input_chars=settings.max_input_chars,
+                short_term_chars=settings.short_term_chars,
+            ),
+            memory=memory,
         )
         if len(registry) > 0
         else None
@@ -109,7 +139,9 @@ def create_app(
             "version": __version__,
             "environment": settings.environment,
             "providers": len(registry),
+            "memory": memory.enabled if memory else False,
         }
 
     app.include_router(chat_router)
+    app.include_router(memory_router)
     return app

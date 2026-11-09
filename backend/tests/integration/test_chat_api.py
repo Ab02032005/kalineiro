@@ -12,7 +12,12 @@ from tests.fakes import FakeProvider
 
 
 def _client(provider: FakeProvider | None = None) -> TestClient:
-    settings = Settings(environment="test", log_level="WARNING", system_prompt="SYS")
+    settings = Settings(
+        environment="test",
+        log_level="WARNING",
+        system_prompt="SYS",
+        memory_db_path=":memory:",
+    )
     registry = None
     if provider is not None:
         registry = ProviderRegistry()

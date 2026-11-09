@@ -1,7 +1,8 @@
-﻿"""Настройки Kali. Читаются из переменных окружения с префиксом KALI_ (или из файла .env)."""
+"""Настройки Kali. Читаются из переменных окружения с префиксом KALI_ (или из файла .env)."""
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from typing import Literal
 
@@ -26,8 +27,9 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"
     port: int = Field(default=8000, ge=1, le=65535)
 
-    # Пути к данным (относительно каталога запуска)
+    # Пути к данным (относительно каталога запуска). ":memory:" — только для тестов.
     data_dir: str = "data"
+    memory_db_path: str = ""
 
     # Провайдер моделей. Без ключа провайдер не подключается, API отвечает 503.
     provider_name: str = "default"
@@ -38,6 +40,22 @@ class Settings(BaseSettings):
 
     system_prompt: str = DEFAULT_SYSTEM_PROMPT
     max_input_chars: int = Field(default=100_000, ge=1000, le=1_000_000)
+    short_term_chars: int = Field(default=12_000, ge=1000, le=200_000)
+
+    # Память
+    memory_enabled: bool = True
+    memory_context_limit: int = Field(default=5, ge=0, le=20)
+
+    @property
+    def is_prod(self) -> bool:
+        return self.environment == "prod"
+
+    @property
+    def database_path(self) -> str:
+        """Путь к файлу базы памяти. По умолчанию — data/kali.db."""
+        if self.memory_db_path:
+            return self.memory_db_path
+        return os.path.join(self.data_dir, "kali.db")
 
     @field_validator("provider_api_key", mode="before")
     @classmethod
@@ -46,10 +64,6 @@ class Settings(BaseSettings):
         if isinstance(value, str) and not value.strip():
             return None
         return value
-
-    @property
-    def is_prod(self) -> bool:
-        return self.environment == "prod"
 
 
 @lru_cache

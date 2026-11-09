@@ -1,7 +1,8 @@
-﻿"""Core AI Engine: принимает диалог, проверяет его и отдаёт провайдеру модели.
+"""Core AI Engine: принимает диалог, проверяет его, добавляет память и отдаёт провайдеру модели.
 
-На этапе 3 ядро — тонкий оркестратор: валидация, системная инструкция, выбор провайдера.
-Память, инструменты и проверка ответов подключаются на этапах 4–9 через те же точки входа.
+Этапы 3–4: валидация, системная инструкция, выбор провайдера, краткосрочная память
+(обрезка диалога по бюджету) и долговременная память (факты и процедуры в контексте).
+Проверка ответов и инструменты подключаются на этапах 6 и 9 через те же точки входа.
 """
 
 from __future__ import annotations
@@ -9,6 +10,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 
+from kali.memory.service import MemoryService
 from kali.models.base import ChatRequest, Message
 from kali.models.registry import ProviderRegistry
 
@@ -19,6 +21,7 @@ MAX_MESSAGES = 200
 class EngineLimits:
     max_input_chars: int
     max_messages: int = MAX_MESSAGES
+    short_term_chars: int = 12_000
 
 
 class CoreEngine:
@@ -31,13 +34,19 @@ class CoreEngine:
         system_prompt: str,
         default_model: str,
         limits: EngineLimits,
+        memory: MemoryService | None = None,
     ) -> None:
         self._registry = registry
         self._system_prompt = system_prompt
         self._default_model = default_model
         self._limits = limits
+        self._memory = memory
 
-    def _prepare(self, messages: Sequence[Message], model: str | None) -> tuple[Message, ...]:
+    @property
+    def memory(self) -> MemoryService | None:
+        return self._memory
+
+    def _prepare(self, messages: Sequence[Message], model: str | None) -> list[Message]:
         """Проверяет диалог и добавляет системную инструкцию в начало."""
         if not messages:
             raise ValueError("Диалог пуст")
@@ -55,7 +64,21 @@ class CoreEngine:
         if messages[0].role != "system":
             prepared.append(Message(role="system", content=self._system_prompt))
         prepared.extend(messages)
-        return tuple(prepared)
+        return prepared
+
+    def _with_memory(self, prepared: list[Message]) -> list[Message]:
+        """Вставляет в диалог релевантные записи памяти сразу после системных инструкций."""
+        if self._memory is None:
+            return prepared
+        query = prepared[-1].content
+        items = self._memory.context_for(query)
+        context = self._memory.format_context(items)
+        if not context:
+            return prepared
+        insert_at = 0
+        while insert_at < len(prepared) and prepared[insert_at].role == "system":
+            insert_at += 1
+        return prepared[:insert_at] + [Message(role="system", content=context)] + prepared[insert_at:]
 
     def _request(
         self,
@@ -63,9 +86,14 @@ class CoreEngine:
         model: str | None,
         temperature: float | None,
         max_tokens: int | None,
+        use_memory: bool,
     ) -> ChatRequest:
+        prepared = self._prepare(messages, model)
+        if use_memory:
+            prepared = self._with_memory(prepared)
+        prepared = MemoryService.trim_short_term(prepared, self._limits.short_term_chars)
         return ChatRequest(
-            messages=self._prepare(messages, model),
+            messages=tuple(prepared),
             model=model or self._default_model,
             temperature=temperature,
             max_tokens=max_tokens,
@@ -79,9 +107,10 @@ class CoreEngine:
         model: str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        use_memory: bool = True,
     ) -> str:
         """Полный ответ одной строкой."""
-        request = self._request(messages, model, temperature, max_tokens)
+        request = self._request(messages, model, temperature, max_tokens, use_memory)
         return await self._registry.get(provider).complete(request)
 
     def answer_stream(
@@ -92,10 +121,17 @@ class CoreEngine:
         model: str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        use_memory: bool = True,
     ) -> AsyncIterator[str]:
         """Поток фрагментов ответа. Проверка входа выполняется сразу, до начала потока."""
-        request = self._request(messages, model, temperature, max_tokens)
+        request = self._request(messages, model, temperature, max_tokens, use_memory)
         return self._registry.get(provider).stream(request)
+
+    def remember_exchange(self, messages: Sequence[Message], reply: str) -> None:
+        """Сохраняет эпизод о завершённом обмене. Вызывается только при явном разрешении."""
+        if self._memory is None or not messages:
+            return
+        self._memory.record_episode(messages[-1].content, reply)
 
     @property
     def default_model(self) -> str:

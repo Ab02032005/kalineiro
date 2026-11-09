@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
@@ -30,6 +30,10 @@ class ChatIn(BaseModel):
     model: str | None = Field(default=None, max_length=200)
     temperature: float | None = Field(default=None, ge=0, le=2)
     max_tokens: int | None = Field(default=None, ge=1, le=8192)
+    # Использовать сохранённые факты и процедуры в ответе (по умолчанию да)
+    use_memory: bool = True
+    # Сохранить краткую запись об этом обмене в эпизоды (по умолчанию нет)
+    remember: bool = False
 
 
 def _engine(request: Request) -> CoreEngine:
@@ -66,16 +70,20 @@ async def list_providers(request: Request) -> dict:
 async def chat(body: ChatIn, request: Request) -> dict:
     """Полный ответ модели одним JSON."""
     engine = _engine(request)
+    messages = _to_messages(body.messages)
     try:
         reply = await engine.answer(
-            _to_messages(body.messages),
+            messages,
             provider=body.provider,
             model=body.model,
             temperature=body.temperature,
             max_tokens=body.max_tokens,
+            use_memory=body.use_memory,
         )
     except (ProviderError, ProviderNotFoundError, ValueError) as exc:
         raise _map_error(exc) from exc
+    if body.remember:
+        engine.remember_exchange(messages, reply)
     return {"reply": reply, "model": body.model or engine.default_model}
 
 
@@ -83,10 +91,17 @@ def _sse(payload: dict) -> str:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
-async def _event_stream(chunks: AsyncIterator[str]) -> AsyncIterator[str]:
+async def _event_stream(
+    chunks: AsyncIterator[str],
+    on_complete: Callable[[str], None] | None,
+) -> AsyncIterator[str]:
+    collected: list[str] = []
     try:
         async for piece in chunks:
+            collected.append(piece)
             yield _sse({"delta": piece})
+        if on_complete is not None:
+            on_complete("".join(collected))
         yield _sse({"done": True})
     except ProviderError as exc:
         log.warning("stream failed", extra={"provider": exc.provider, "status": exc.status_code})
@@ -97,18 +112,25 @@ async def _event_stream(chunks: AsyncIterator[str]) -> AsyncIterator[str]:
 async def chat_stream(body: ChatIn, request: Request) -> StreamingResponse:
     """Ответ по мере генерации: события SSE вида data: {"delta": "..."}, в конце {"done": true}."""
     engine = _engine(request)
+    messages = _to_messages(body.messages)
     try:
         chunks = engine.answer_stream(
-            _to_messages(body.messages),
+            messages,
             provider=body.provider,
             model=body.model,
             temperature=body.temperature,
             max_tokens=body.max_tokens,
+            use_memory=body.use_memory,
         )
     except (ProviderNotFoundError, ValueError) as exc:
         raise _map_error(exc) from exc
+
+    def remember(reply: str) -> None:
+        if body.remember and reply:
+            engine.remember_exchange(messages, reply)
+
     return StreamingResponse(
-        _event_stream(chunks),
+        _event_stream(chunks, remember),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

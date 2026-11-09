@@ -8,7 +8,8 @@ from kali.config.settings import Settings
 
 
 def _client(environment: str = "test") -> TestClient:
-    return TestClient(create_app(Settings(environment=environment, log_level="WARNING")))
+    settings = Settings(environment=environment, log_level="WARNING", memory_db_path=":memory:")
+    return TestClient(create_app(settings))
 
 
 def test_health_returns_ok_and_version():
