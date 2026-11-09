@@ -41,3 +41,9 @@ def test_json_formatter_outputs_valid_json_with_extra_fields():
     assert data["level"] == "INFO"
     assert data["request_id"] == "r1"
     assert "ts" in data
+
+
+def test_blank_provider_key_means_not_configured(monkeypatch):
+    monkeypatch.setenv("KALI_PROVIDER_API_KEY", "")
+    assert Settings().provider_api_key is None
+
