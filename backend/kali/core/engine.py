@@ -141,6 +141,11 @@ class CoreEngine:
         )
         return request, sources
 
+    @staticmethod
+    def add_system(messages: Sequence[Message], text: str) -> list[Message]:
+        """Публичная вставка системной инструкции (например, из профиля агента)."""
+        return CoreEngine._insert_system(list(messages), text)
+
     async def answer(
         self,
         messages: Sequence[Message],

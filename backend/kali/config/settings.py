@@ -55,6 +55,12 @@ class Settings(BaseSettings):
     embeddings_enabled: bool = True
     embedding_model: str = "text-embedding-3-small"
 
+    # Инструменты
+    workspace_dir: str = "data/workspace"
+    sandbox_enabled: bool = True
+    sandbox_image: str = "python:3.13-slim"
+    sandbox_timeout_s: int = Field(default=10, ge=1, le=60)
+
     @property
     def is_prod(self) -> bool:
         return self.environment == "prod"

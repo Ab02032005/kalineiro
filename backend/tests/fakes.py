@@ -1,4 +1,4 @@
-"""Тестовые двойники провайдеров. Используются только в тестах, в работе не подключаются."""
+"""Тестовые двойники провайдера и эмбеддингов. Используются только в тестах, в работе не подключаются."""
 
 from __future__ import annotations
 
@@ -7,19 +7,30 @@ import re
 from collections.abc import AsyncIterator
 
 from kali.knowledge.embeddings import EmbeddingError
-from kali.models.base import ChatRequest
+from kali.models.base import ChatRequest, ChatResult
 from kali.models.errors import ProviderError
 
 
 class FakeProvider:
-    """Возвращает заранее заданный ответ и запоминает запросы."""
+    """Возвращает заранее заданные ответы и запоминает запросы.
 
-    def __init__(self, name: str = "fake", reply: str = "ответ", chunks: list[str] | None = None,
-                 fail_with: ProviderError | None = None) -> None:
+    tool_script — список ChatResult, которые по очереди отдаются в complete_with_tools
+    (так тестируется цикл агента без сети).
+    """
+
+    def __init__(
+        self,
+        name: str = "fake",
+        reply: str = "ответ",
+        chunks: list[str] | None = None,
+        fail_with: ProviderError | None = None,
+        tool_script: list[ChatResult] | None = None,
+    ) -> None:
         self.name = name
         self.reply = reply
         self.chunks = chunks if chunks is not None else [reply]
         self.fail_with = fail_with
+        self.tool_script = list(tool_script or [])
         self.requests: list[ChatRequest] = []
 
     async def complete(self, request: ChatRequest) -> str:
@@ -27,6 +38,14 @@ class FakeProvider:
         if self.fail_with:
             raise self.fail_with
         return self.reply
+
+    async def complete_with_tools(self, request: ChatRequest) -> ChatResult:
+        self.requests.append(request)
+        if self.fail_with:
+            raise self.fail_with
+        if self.tool_script:
+            return self.tool_script.pop(0)
+        return ChatResult(text=self.reply)
 
     def stream(self, request: ChatRequest) -> AsyncIterator[str]:
         self.requests.append(request)

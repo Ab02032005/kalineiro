@@ -8,12 +8,26 @@ from collections.abc import AsyncIterator
 
 import httpx
 
-from kali.models.base import ChatRequest
+from kali.models.base import ChatRequest, ChatResult, Message, ToolCall
 from kali.models.errors import ProviderError
 
 log = logging.getLogger("kali.models.openai")
 
 _ERROR_PREVIEW_CHARS = 300
+
+
+def _serialize_message(message: Message) -> dict:
+    data: dict = {"role": message.role, "content": message.content}
+    if message.tool_calls:
+        data["content"] = message.content or None
+        data["tool_calls"] = [
+            {"id": c.id, "type": "function", "function": {"name": c.name, "arguments": c.arguments}}
+            for c in message.tool_calls
+        ]
+    if message.role == "tool":
+        data["tool_call_id"] = message.tool_call_id
+        data["name"] = message.name
+    return data
 
 
 class OpenAICompatibleProvider:
@@ -42,13 +56,19 @@ class OpenAICompatibleProvider:
     def _payload(self, request: ChatRequest, stream: bool) -> dict:
         body: dict = {
             "model": request.model,
-            "messages": [{"role": m.role, "content": m.content} for m in request.messages],
+            "messages": [_serialize_message(m) for m in request.messages],
             "stream": stream,
         }
         if request.temperature is not None:
             body["temperature"] = request.temperature
         if request.max_tokens is not None:
             body["max_tokens"] = request.max_tokens
+        if request.tools and not stream:
+            body["tools"] = [
+                {"type": "function", "function": {"name": t.name, "description": t.description,
+                                                  "parameters": t.parameters}}
+                for t in request.tools
+            ]
         return body
 
     def _error(self, status: int, text: str) -> ProviderError:
@@ -57,7 +77,7 @@ class OpenAICompatibleProvider:
             return ProviderError(self.name, 429, "Лимит запросов провайдера исчерпан")
         return ProviderError(self.name, 502, f"Провайдер вернул ошибку {status}: {preview}")
 
-    async def complete(self, request: ChatRequest) -> str:
+    async def _post(self, request: ChatRequest) -> dict:
         try:
             response = await self._client.post("/chat/completions", json=self._payload(request, False))
         except httpx.HTTPError as exc:
@@ -65,10 +85,27 @@ class OpenAICompatibleProvider:
         if response.status_code >= 400:
             raise self._error(response.status_code, response.text)
         try:
-            content = response.json()["choices"][0]["message"]["content"]
+            return response.json()["choices"][0]["message"]
         except (KeyError, IndexError, TypeError, ValueError) as exc:
             raise ProviderError(self.name, 502, "Неожиданный формат ответа провайдера") from exc
-        return content or ""
+
+    async def complete(self, request: ChatRequest) -> str:
+        message = await self._post(request)
+        return message.get("content") or ""
+
+    async def complete_with_tools(self, request: ChatRequest) -> ChatResult:
+        message = await self._post(request)
+        calls: list[ToolCall] = []
+        for raw in message.get("tool_calls") or []:
+            try:
+                calls.append(ToolCall(
+                    id=str(raw["id"]),
+                    name=str(raw["function"]["name"]),
+                    arguments=str(raw["function"].get("arguments") or "{}"),
+                ))
+            except (KeyError, TypeError) as exc:
+                raise ProviderError(self.name, 502, "Неожиданный формат вызова инструмента") from exc
+        return ChatResult(text=message.get("content") or "", tool_calls=tuple(calls))
 
     async def stream(self, request: ChatRequest) -> AsyncIterator[str]:
         try:

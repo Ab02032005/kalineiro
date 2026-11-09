@@ -8,11 +8,13 @@ import time
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from kali import __version__
+from kali.api.agents import router as agents_router
 from kali.api.chat import router as chat_router
 from kali.api.knowledge import router as knowledge_router
 from kali.api.memory import router as memory_router
@@ -26,6 +28,17 @@ from kali.memory.store import SqliteMemoryStore
 from kali.models.openai_compatible import OpenAICompatibleProvider
 from kali.models.registry import ProviderRegistry
 from kali.observability.logging import configure_logging
+from kali.tools.base import ToolRegistry
+from kali.tools.builtin import (
+    Calculator,
+    GenerateImage,
+    ListFiles,
+    PythonExec,
+    ReadFile,
+    Workspace,
+    WriteFile,
+)
+from kali.tools.sandbox import SandboxLimits
 
 log = logging.getLogger("kali.api")
 
@@ -88,16 +101,35 @@ def build_knowledge(settings: Settings, embedder: Embedder | None) -> tuple[Sqli
     return store, service
 
 
+def build_tools(settings: Settings) -> ToolRegistry:
+    """Регистрирует встроенные инструменты. Рискованные помечены как risky и выключены по умолчанию."""
+    workspace = Workspace(Path(settings.workspace_dir))
+    registry = ToolRegistry()
+    registry.register(Calculator())
+    registry.register(ListFiles(workspace))
+    registry.register(ReadFile(workspace))
+    registry.register(WriteFile(workspace))
+    registry.register(GenerateImage(workspace))
+    if settings.sandbox_enabled:
+        registry.register(PythonExec(SandboxLimits(
+            image=settings.sandbox_image,
+            timeout_s=settings.sandbox_timeout_s,
+        )))
+    return registry
+
+
 def create_app(
     settings: Settings | None = None,
     registry: ProviderRegistry | None = None,
     memory: MemoryService | None = None,
     knowledge: KnowledgeService | None = None,
+    tools: ToolRegistry | None = None,
 ) -> FastAPI:
     """Создаёт приложение. В тестах можно передать свои реестр, память и базу знаний."""
     settings = settings or get_settings()
     configure_logging(settings.log_level)
     registry = registry if registry is not None else build_registry(settings)
+    tools = tools if tools is not None else build_tools(settings)
 
     owned_memory_store: SqliteMemoryStore | None = None
     if memory is None:
@@ -132,6 +164,7 @@ def create_app(
     app.state.registry = registry
     app.state.memory = memory
     app.state.knowledge = knowledge
+    app.state.tools = tools
     app.state.engine = (
         CoreEngine(
             registry,
@@ -186,9 +219,11 @@ def create_app(
             "memory": memory.enabled if memory else False,
             "knowledge": knowledge is not None,
             "semantic_search": bool(knowledge and knowledge.semantic_enabled),
+            "tools": len(tools.names()),
         }
 
     app.include_router(chat_router)
     app.include_router(memory_router)
     app.include_router(knowledge_router)
+    app.include_router(agents_router)
     return app
