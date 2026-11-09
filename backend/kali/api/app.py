@@ -1,4 +1,4 @@
-"""Фабрика FastAPI-приложения Kali: сборка провайдеров, памяти, ядра и маршрутов."""
+"""Фабрика FastAPI-приложения Kali: сборка провайдеров, памяти, базы знаний, ядра и маршрутов."""
 
 from __future__ import annotations
 
@@ -14,9 +14,13 @@ from fastapi.responses import JSONResponse
 
 from kali import __version__
 from kali.api.chat import router as chat_router
+from kali.api.knowledge import router as knowledge_router
 from kali.api.memory import router as memory_router
 from kali.config.settings import Settings, get_settings
 from kali.core.engine import CoreEngine, EngineLimits
+from kali.knowledge.embeddings import Embedder, OpenAIEmbedder
+from kali.knowledge.service import KnowledgeService
+from kali.knowledge.store import SqliteKnowledgeStore
 from kali.memory.service import MemoryService
 from kali.memory.store import SqliteMemoryStore
 from kali.models.openai_compatible import OpenAICompatibleProvider
@@ -43,12 +47,14 @@ def build_registry(settings: Settings) -> ProviderRegistry:
     return registry
 
 
-def build_memory(settings: Settings) -> tuple[SqliteMemoryStore, MemoryService]:
-    """Открывает базу памяти. Для ':memory:' база живёт только в процессе (тесты)."""
-    path = settings.database_path
+def _ensure_parent_dir(path: str) -> None:
     if path != ":memory:":
         os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    store = SqliteMemoryStore(path)
+
+
+def build_memory(settings: Settings) -> tuple[SqliteMemoryStore, MemoryService]:
+    _ensure_parent_dir(settings.database_path)
+    store = SqliteMemoryStore(settings.database_path)
     service = MemoryService(
         store,
         context_limit=settings.memory_context_limit,
@@ -57,26 +63,62 @@ def build_memory(settings: Settings) -> tuple[SqliteMemoryStore, MemoryService]:
     return store, service
 
 
+def build_embedder(settings: Settings) -> Embedder | None:
+    """Эмбеддинги нужны ключ провайдера и включённый флаг. Иначе поиск работает по словам."""
+    if settings.provider_api_key is None or not settings.embeddings_enabled:
+        return None
+    return OpenAIEmbedder(
+        settings.provider_base_url,
+        settings.provider_api_key.get_secret_value(),
+        settings.embedding_model,
+    )
+
+
+def build_knowledge(settings: Settings, embedder: Embedder | None) -> tuple[SqliteKnowledgeStore, KnowledgeService]:
+    _ensure_parent_dir(settings.database_path)
+    store = SqliteKnowledgeStore(settings.database_path)
+    service = KnowledgeService(
+        store,
+        embedder,
+        top_k=settings.knowledge_top_k,
+        chunk_chars=settings.knowledge_chunk_chars,
+        chunk_overlap=settings.knowledge_chunk_overlap,
+        max_upload_bytes=settings.knowledge_max_upload_mb * 1024 * 1024,
+    )
+    return store, service
+
+
 def create_app(
     settings: Settings | None = None,
     registry: ProviderRegistry | None = None,
     memory: MemoryService | None = None,
+    knowledge: KnowledgeService | None = None,
 ) -> FastAPI:
-    """Создаёт приложение. В тестах можно передать свои реестр провайдеров и память."""
+    """Создаёт приложение. В тестах можно передать свои реестр, память и базу знаний."""
     settings = settings or get_settings()
     configure_logging(settings.log_level)
     registry = registry if registry is not None else build_registry(settings)
 
-    owned_store: SqliteMemoryStore | None = None
+    owned_memory_store: SqliteMemoryStore | None = None
     if memory is None:
-        owned_store, memory = build_memory(settings)
+        owned_memory_store, memory = build_memory(settings)
+
+    owned_embedder: Embedder | None = None
+    owned_knowledge_store: SqliteKnowledgeStore | None = None
+    if knowledge is None and settings.knowledge_enabled:
+        owned_embedder = build_embedder(settings)
+        owned_knowledge_store, knowledge = build_knowledge(settings, owned_embedder)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
         await registry.close_all()
-        if owned_store is not None:
-            owned_store.close()
+        if owned_embedder is not None:
+            await owned_embedder.aclose()
+        if owned_knowledge_store is not None:
+            owned_knowledge_store.close()
+        if owned_memory_store is not None:
+            owned_memory_store.close()
 
     app = FastAPI(
         title=settings.app_name,
@@ -89,6 +131,7 @@ def create_app(
     app.state.settings = settings
     app.state.registry = registry
     app.state.memory = memory
+    app.state.knowledge = knowledge
     app.state.engine = (
         CoreEngine(
             registry,
@@ -99,6 +142,7 @@ def create_app(
                 short_term_chars=settings.short_term_chars,
             ),
             memory=memory,
+            knowledge=knowledge,
         )
         if len(registry) > 0
         else None
@@ -140,8 +184,11 @@ def create_app(
             "environment": settings.environment,
             "providers": len(registry),
             "memory": memory.enabled if memory else False,
+            "knowledge": knowledge is not None,
+            "semantic_search": bool(knowledge and knowledge.semantic_enabled),
         }
 
     app.include_router(chat_router)
     app.include_router(memory_router)
+    app.include_router(knowledge_router)
     return app

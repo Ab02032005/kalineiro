@@ -46,13 +46,22 @@ class Settings(BaseSettings):
     memory_enabled: bool = True
     memory_context_limit: int = Field(default=5, ge=0, le=20)
 
+    # База знаний
+    knowledge_enabled: bool = True
+    knowledge_top_k: int = Field(default=5, ge=1, le=20)
+    knowledge_max_upload_mb: int = Field(default=10, ge=1, le=50)
+    knowledge_chunk_chars: int = Field(default=800, ge=200, le=4000)
+    knowledge_chunk_overlap: int = Field(default=120, ge=0, le=800)
+    embeddings_enabled: bool = True
+    embedding_model: str = "text-embedding-3-small"
+
     @property
     def is_prod(self) -> bool:
         return self.environment == "prod"
 
     @property
     def database_path(self) -> str:
-        """Путь к файлу базы памяти. По умолчанию — data/kali.db."""
+        """Путь к файлу базы данных. По умолчанию — data/kali.db."""
         if self.memory_db_path:
             return self.memory_db_path
         return os.path.join(self.data_dir, "kali.db")

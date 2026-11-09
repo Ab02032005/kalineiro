@@ -82,14 +82,15 @@ def test_stream_emits_sse_events_and_done():
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/event-stream")
         events = [json.loads(line[5:]) for line in response.iter_lines() if line.startswith("data:")]
-    assert events == [{"delta": "При"}, {"delta": "вет"}, {"done": True}]
+    assert events[0] == {"sources": []}
+    assert events[1:] == [{"delta": "При"}, {"delta": "вет"}, {"done": True}]
 
 
 def test_stream_error_is_sent_as_event():
     provider = FakeProvider(fail_with=ProviderError("fake", 502, "обрыв"))
     with _client(provider).stream("POST", "/v1/chat/stream", json=_payload()) as response:
         events = [json.loads(line[5:]) for line in response.iter_lines() if line.startswith("data:")]
-    assert events == [{"error": "обрыв", "status": 502}]
+    assert events[1:] == [{"error": "обрыв", "status": 502}]
 
 
 def test_providers_endpoint_hides_secrets():

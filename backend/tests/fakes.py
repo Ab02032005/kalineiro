@@ -1,9 +1,12 @@
-"""Тестовые двойники провайдера. Используются только в тестах, в работе не подключаются."""
+"""Тестовые двойники провайдеров. Используются только в тестах, в работе не подключаются."""
 
 from __future__ import annotations
 
+import hashlib
+import re
 from collections.abc import AsyncIterator
 
+from kali.knowledge.embeddings import EmbeddingError
 from kali.models.base import ChatRequest
 from kali.models.errors import ProviderError
 
@@ -34,6 +37,34 @@ class FakeProvider:
             raise self.fail_with
         for chunk in self.chunks:
             yield chunk
+
+    async def aclose(self) -> None:
+        return None
+
+
+class FakeEmbedder:
+    """Детерминированные векторы по словам (хеш-корзины). Похожие тексты дают близкие векторы."""
+
+    DIMS = 64
+
+    def __init__(self, model: str = "fake-embed", fail: bool = False) -> None:
+        self.model = model
+        self.fail = fail
+        self.calls = 0
+
+    @classmethod
+    def vector(cls, text: str) -> list[float]:
+        vec = [0.0] * cls.DIMS
+        for word in re.findall(r"\w+", text.lower()):
+            bucket = int(hashlib.md5(word.encode("utf-8")).hexdigest(), 16) % cls.DIMS
+            vec[bucket] += 1.0
+        return vec
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        self.calls += 1
+        if self.fail:
+            raise EmbeddingError("тестовый сбой")
+        return [self.vector(t) for t in texts]
 
     async def aclose(self) -> None:
         return None

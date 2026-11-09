@@ -1,4 +1,4 @@
-"""Тесты ядра и реестра провайдеров."""
+"""Тесты ядра и реестра провайдеров (после перехода ядра на build/answer)."""
 
 import asyncio
 
@@ -52,9 +52,10 @@ def test_engine_adds_system_prompt_and_default_model():
     provider = FakeProvider(reply="ok")
     registry = ProviderRegistry()
     registry.register(provider)
-    reply = asyncio.run(_engine(registry).answer(_user()))
+    reply, sources = asyncio.run(_engine(registry).answer(_user()))
 
     assert reply == "ok"
+    assert sources == []
     request = provider.requests[0]
     assert request.model == "default-model"
     assert request.messages[0] == Message(role="system", content="SYSTEM")
@@ -93,18 +94,20 @@ def test_engine_rejects_too_long_input():
         asyncio.run(_engine(registry, max_chars=10).answer(_user("x" * 50)))
 
 
-def test_engine_stream_validates_before_streaming():
+def test_engine_build_validates_before_streaming():
     registry = ProviderRegistry()
     registry.register(FakeProvider())
     with pytest.raises(ValueError):
-        _engine(registry).answer_stream([])
+        asyncio.run(_engine(registry).build([]))
 
 
 def test_engine_stream_yields_chunks():
     registry = ProviderRegistry()
     registry.register(FakeProvider(chunks=["а", "б", "в"]))
+    engine = _engine(registry)
 
     async def collect():
-        return [c async for c in _engine(registry).answer_stream(_user())]
+        request, _ = await engine.build(_user())
+        return [c async for c in engine.provider().stream(request)]
 
     assert asyncio.run(collect()) == ["а", "б", "в"]
