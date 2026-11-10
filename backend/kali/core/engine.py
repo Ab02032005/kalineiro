@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from kali.knowledge.service import KnowledgeService
 from kali.memory.service import MemoryService
@@ -34,6 +34,8 @@ class Source:
     title: str
     chunk_index: int
     excerpt: str
+    # Полный текст фрагмента нужен только для проверки ответа и в API не возвращается
+    text: str = field(default="", repr=False, compare=False)
 
 
 class CoreEngine:
@@ -126,6 +128,7 @@ class CoreEngine:
                         title=hit.title,
                         chunk_index=hit.chunk_index,
                         excerpt=self._knowledge.excerpt(hit.content),
+                        text=hit.content,
                     )
                     for n, hit in enumerate(hits, start=1)
                 ]

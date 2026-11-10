@@ -113,7 +113,7 @@ def test_stream_sends_sources_first():
         events = _sse_events(response)
     assert "sources" in events[0]
     assert events[0]["sources"][0]["title"] == "правила"
-    assert events[1:] == [{"delta": "Да"}, {"delta": "."}, {"done": True}]
+    assert [e for e in events[1:] if "verification" not in e] == [{"delta": "Да"}, {"delta": "."}, {"done": True}]
 
 
 def test_health_reports_knowledge_and_semantic_flags():

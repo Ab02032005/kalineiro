@@ -16,8 +16,15 @@ from kali.models.base import Message
 from kali.models.errors import ProviderError, ProviderNotFoundError
 from kali.security.auth import User
 from kali.tools.base import ToolRegistry
+from kali.verification.checker import check_actions, check_answer
 
 router = APIRouter(prefix="/v1", tags=["agents"])
+
+
+def source_view(source) -> dict:
+    data = asdict(source)
+    data.pop("text", None)
+    return data
 
 
 class AgentMessage(BaseModel):
@@ -106,11 +113,17 @@ async def run(body: AgentRunIn, request: Request, user: User = Depends(require_u
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    verification = check_answer(result.reply, {s.number: s.text for s in sources})
+    action_issues = check_actions(result.reply, [asdict(t) for t in result.trace])
+    if action_issues:
+        verification.issues.extend(action_issues)
+        verification.status = "unsupported"
     return {
         "reply": result.reply,
+        "verification": verification.as_dict(),
         "model": prepared.model,
         "profile": profile.name,
         "incomplete": result.incomplete,
-        "sources": [asdict(s) for s in sources],
+        "sources": [source_view(s) for s in sources],
         "trace": [asdict(t) for t in result.trace],
     }

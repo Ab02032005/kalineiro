@@ -210,12 +210,24 @@ function renderTrace(trace, incomplete) {
     trace.map((t) => el("div", { class: t.ok ? "" : "error" }, `${t.ok ? "✓" : "✗"} ${t.tool}: ${t.result}`)));
 }
 
+function verificationNode(v) {
+  if (!v) return null;
+  const cls = v.status === "verified" ? "ok" : (v.status === "partial" ? "" : "error");
+  const parts = [el("span", { class: "chip " + cls, text: "Проверка: " + v.label })];
+  if (v.issues && v.issues.length) {
+    parts.push(el("details", { class: "small" },
+      el("summary", { text: "Замечания проверки: " + v.issues.length }),
+      v.issues.map((i) => el("div", { text: i }))));
+  }
+  return el("div", { class: "verify", style: "margin-top:8px;font-size:13px" }, parts);
+}
 function messageNode(msg) {
   if (msg.role === "user") return el("div", { class: "msg user", text: msg.content });
   const body = el("div", { class: "body" });
   body.innerHTML = markdown(msg.content || "");
   if (msg.pending) body.append(el("span", { class: "typing", text: "Думаю…" }));
-  return el("div", { class: "msg assistant" }, body, renderSources(msg.sources), renderTrace(msg.trace, msg.incomplete));
+  return el("div", { class: "msg assistant" }, body, renderSources(msg.sources), renderTrace(msg.trace, msg.incomplete),
+    verificationNode(msg.verification));
 }
 
 function renderMessages(container, chat) {
@@ -254,6 +266,7 @@ async function streamChat(chat, assistantMsg, body) {
       if (!line.startsWith("data:")) continue;
       const event = JSON.parse(line.slice(5));
       if (event.sources) assistantMsg.sources = event.sources;
+      if (event.verification) assistantMsg.verification = event.verification;
       if (event.delta) assistantMsg.content += event.delta;
       if (event.error) throw new Error(event.error);
       if (event.delta || event.sources) updateAssistant(chat, assistantMsg);
@@ -296,6 +309,7 @@ async function sendMessage(text) {
       assistantMsg.sources = data.sources;
       assistantMsg.trace = data.trace;
       assistantMsg.incomplete = data.incomplete;
+      assistantMsg.verification = data.verification;
     } else {
       await streamChat(chat, assistantMsg, {
         messages: history, model: ui.model, use_memory: ui.useMemory,

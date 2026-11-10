@@ -25,7 +25,9 @@ class FakeProvider:
         chunks: list[str] | None = None,
         fail_with: ProviderError | None = None,
         tool_script: list[ChatResult] | None = None,
+        reply_script: list[str] | None = None,
     ) -> None:
+        self.reply_script = list(reply_script or [])
         self.name = name
         self.reply = reply
         self.chunks = chunks if chunks is not None else [reply]
@@ -37,6 +39,8 @@ class FakeProvider:
         self.requests.append(request)
         if self.fail_with:
             raise self.fail_with
+        if self.reply_script:
+            return self.reply_script.pop(0)
         return self.reply
 
     async def complete_with_tools(self, request: ChatRequest) -> ChatResult:
