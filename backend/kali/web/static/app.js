@@ -20,6 +20,9 @@ let ui = Object.assign({
   profile: "assistant", model: "gpt-4o-mini", allowActions: false,
 }, loadJson(UI_KEY, {}));
 let chats = loadJson(CHATS_KEY, []);
+const SESSION_KEY = "kali.session";
+let session = loadJson(SESSION_KEY, null);
+let appVersion = "";
 let activeChatId = chats[0] ? chats[0].id : null;
 
 function persistUi() { saveJson(UI_KEY, ui); }
@@ -70,7 +73,10 @@ async function api(path, { method = "GET", body } = {}) {
     options.headers["Content-Type"] = "application/json";
     options.body = JSON.stringify(body);
   }
+  const token = sessionToken();
+  if (token) options.headers["Authorization"] = "Bearer " + token;
   const res = await fetch(path, options);
+  if (res.status === 401 && path !== "/v1/auth/login") { handleUnauthorized(); throw new Error("Нужно войти в систему"); }
   if (res.status === 204) return null;
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(errorText(data, res.status));
@@ -165,7 +171,8 @@ async function refreshStatus() {
     const health = await api("/health");
     dot.className = "status up";
     dot.title = "Сервер работает, версия " + health.version;
-    $("#sidebarFoot").textContent = "v" + health.version + " · провайдеров: " + health.providers;
+    appVersion = health.version;
+    renderFoot();
   } catch (e) {
     dot.className = "status down";
     dot.title = "Сервер недоступен";
@@ -225,8 +232,10 @@ function renderMessages(container, chat) {
 
 async function streamChat(chat, assistantMsg, body) {
   const res = await fetch("/v1/chat/stream", {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    method: "POST", headers: Object.assign({ "Content-Type": "application/json" }, authHeaders()),
+    body: JSON.stringify(body),
   });
+  if (res.status === 401) { handleUnauthorized(); throw new Error("Нужно войти в систему"); }
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
     throw new Error(errorText(data, res.status));
@@ -627,7 +636,7 @@ async function viewFiles(view) {
         list.append(el("div", { class: "item" },
           el("div", { class: "item-head" }, el("strong", { text: f.name }),
             el("div", { class: "row" },
-              el("a", { href: "/v1/files/" + encodeURIComponent(f.name), attrs: { download: f.name }, text: "Скачать" }),
+              el("button", { class: "btn small", text: "Скачать", on: { click: () => downloadFile(f.name) } }),
               el("button", { class: "btn btn-danger small", text: "Удалить", on: { click: async () => {
                 if (!confirm("Удалить файл «" + f.name + "»?")) return;
                 await api("/v1/files/" + encodeURIComponent(f.name), { method: "DELETE" });
@@ -775,6 +784,119 @@ async function viewAdmin(view) {
       el("div", { class: "card" }, el("table", {},
         el("tbody", {}, Object.entries(s.settings).map(([k, v]) => el("tr", {}, el("th", { text: k }), el("td", { text: String(v) })))))));
   } catch (err) { body.append(el("div", { class: "error", text: err.message })); }
+  if (session && session.role === "admin") await adminExtras(view);
+}
+
+// ---------- вход и сессия ----------
+function sessionToken() { return session && session.token ? session.token : ""; }
+function authHeaders() { const t = sessionToken(); return t ? { Authorization: "Bearer " + t } : {}; }
+function endSession() { session = null; localStorage.removeItem(SESSION_KEY); }
+function handleUnauthorized() {
+  if (session) { endSession(); toast("Сессия истекла, войдите снова"); render(); }
+}
+function roleName(role) { return role === "admin" ? "администратор" : "пользователь"; }
+function renderFoot() {
+  const foot = $("#sidebarFoot");
+  foot.innerHTML = "";
+  foot.append(el("div", { text: appVersion ? "v" + appVersion : "" }));
+  if (session) {
+    foot.append(el("div", { class: "row", style: "margin-top:6px" },
+      el("span", { text: session.username + " · " + roleName(session.role) }),
+      el("button", { class: "btn small", text: "Выйти", on: { click: logout } })));
+  }
+}
+async function logout() {
+  try { await api("/v1/auth/logout", { method: "POST" }); } catch (e) { /* сессия всё равно закрывается */ }
+  endSession();
+  toast("Вы вышли");
+  location.hash = "#/chat";
+  render();
+}
+function viewLogin(view) {
+  view.innerHTML = "";
+  const user = el("input", { type: "text", attrs: { autocomplete: "username" } });
+  const pass = el("input", { type: "password", attrs: { autocomplete: "current-password" } });
+  const status = el("div", { class: "small error" });
+  const submit = async (e) => {
+    e.preventDefault();
+    status.textContent = "";
+    try {
+      const res = await fetch("/v1/auth/login", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: user.value.trim(), password: pass.value }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(errorText(data, res.status));
+      session = { token: data.token, username: data.username, role: data.role, expires_at: data.expires_at };
+      saveJson(SESSION_KEY, session);
+      location.hash = "#/chat";
+      render();
+      refreshStatus();
+    } catch (err) { status.textContent = err.message; }
+  };
+  view.append(el("form", { class: "card", style: "max-width:360px;margin:8vh auto", on: { submit } },
+    el("h2", { text: "Вход в Kali" }),
+    el("div", { class: "field" }, el("label", { text: "Логин" }), user),
+    el("div", { class: "field" }, el("label", { text: "Пароль" }), pass),
+    status,
+    el("button", { class: "btn btn-primary", type: "submit", text: "Войти" }),
+    el("p", { class: "small muted", text: "Учётную запись создаёт администратор на этом компьютере: python -m kali.cli create-user --username ИМЯ --role user" })));
+  $("#pageTitle").textContent = "Вход";
+  setTimeout(() => user.focus(), 0);
+}
+async function downloadFile(name) {
+  try {
+    const res = await fetch("/v1/files/" + encodeURIComponent(name), { headers: authHeaders() });
+    if (res.status === 401) { handleUnauthorized(); return; }
+    if (!res.ok) throw new Error("Не удалось скачать файл");
+    const url = URL.createObjectURL(await res.blob());
+    const a = el("a", { href: url, download: name });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  } catch (err) { toast(err.message); }
+}
+async function adminExtras(view) {
+  const usersBox = el("div", { class: "list" });
+  const auditBox = el("div", { class: "list" });
+  const newUser = el("input", { type: "text", placeholder: "логин (3–32 символа)" });
+  const newPass = el("input", { type: "password", placeholder: "пароль (не короче 10 символов)" });
+  const newRole = el("select", {}, el("option", { value: "user", text: "пользователь" }),
+    el("option", { value: "admin", text: "администратор" }));
+  const msg = el("div", { class: "small" });
+  const loadUsers = async () => {
+    const { items } = await api("/v1/users");
+    usersBox.innerHTML = "";
+    for (const u of items) {
+      usersBox.append(el("div", { class: "item" }, el("strong", { text: u.username }),
+        el("span", { class: "small muted", text: " · " + roleName(u.role) + " · " + formatDate(u.created_at) })));
+    }
+  };
+  const loadAudit = async () => {
+    const { items } = await api("/v1/admin/audit");
+    auditBox.innerHTML = "";
+    for (const e of items.slice(0, 50)) {
+      auditBox.append(el("div", { class: "item small" },
+        formatDate(e.ts) + " · " + e.actor + " · " + e.action + (e.detail ? " · " + e.detail : "")));
+    }
+  };
+  view.append(el("h3", { text: "Пользователи", style: "margin-top:18px" }),
+    el("div", { class: "card", style: "margin-bottom:12px" },
+      el("div", { class: "row" }, newUser, newPass, newRole,
+        el("button", { class: "btn btn-primary", text: "Создать", on: { click: async () => {
+          try {
+            await api("/v1/users", { method: "POST", body: { username: newUser.value.trim(), password: newPass.value, role: newRole.value } });
+            msg.textContent = "Пользователь создан"; msg.className = "small ok";
+            newUser.value = ""; newPass.value = "";
+            loadUsers();
+          } catch (err) { msg.textContent = err.message; msg.className = "small error"; }
+        } } })),
+      msg),
+    usersBox,
+    el("h3", { text: "Журнал событий", style: "margin-top:18px" }),
+    auditBox);
+  try { await loadUsers(); await loadAudit(); } catch (err) { view.append(el("div", { class: "error", text: err.message })); }
 }
 
 // ---------- маршрутизация ----------
@@ -796,9 +918,16 @@ function currentRoute() {
 }
 
 function render() {
+  if (!sessionToken()) {
+    $("#layout").classList.remove("menu-open");
+    renderFoot();
+    viewLogin($("#view"));
+    return;
+  }
   const name = currentRoute();
   document.querySelectorAll(".nav a").forEach((a) => a.classList.toggle("active", a.dataset.route === name));
   $("#layout").classList.remove("menu-open");
+  renderFoot();
   const view = $("#view");
   view.innerHTML = "";
   if (name === "chat") {

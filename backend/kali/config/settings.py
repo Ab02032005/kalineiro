@@ -61,6 +61,11 @@ class Settings(BaseSettings):
     sandbox_image: str = "python:3.13-slim"
     sandbox_timeout_s: int = Field(default=10, ge=1, le=60)
 
+    # Безопасность
+    auth_enabled: bool = True
+    auth_session_hours: int = Field(default=12, ge=1, le=168)
+    login_attempts_per_minute: int = Field(default=10, ge=1, le=100)
+
     @property
     def is_prod(self) -> bool:
         return self.environment == "prod"

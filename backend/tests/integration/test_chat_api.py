@@ -12,7 +12,7 @@ from tests.fakes import FakeProvider
 
 
 def _client(provider: FakeProvider | None = None) -> TestClient:
-    settings = Settings(
+    settings = Settings(auth_enabled=False, 
         environment="test",
         log_level="WARNING",
         system_prompt="SYS",

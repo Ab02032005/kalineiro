@@ -11,7 +11,7 @@ SECRET = "sk-test-secret-value-1234567890"
 
 
 def _client(tmp_path) -> TestClient:
-    settings = Settings(
+    settings = Settings(auth_enabled=False, 
         environment="test",
         log_level="WARNING",
         memory_db_path=":memory:",

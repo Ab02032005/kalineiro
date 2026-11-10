@@ -13,7 +13,7 @@ from tests.fakes import FakeProvider
 
 
 def _app(provider: FakeProvider | None = None, memory_enabled: bool = True):
-    settings = Settings(
+    settings = Settings(auth_enabled=False, 
         environment="test",
         log_level="WARNING",
         system_prompt="SYS",

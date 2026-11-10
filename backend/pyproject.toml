@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kali"
-version = "0.7.0"
+version = "0.8.0"
 description = "Kali — модульная AI-платформа с подключаемыми моделями, памятью и инструментами"
 requires-python = ">=3.12"
 dependencies = [
@@ -36,5 +36,5 @@ line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
-# Схемы параметров инструментов — намеренные константы классов
-ignore = ["RUF012"]
+# RUF012: схемы инструментов — намеренные константы. B008: Depends в аргументах — идиома FastAPI
+ignore = ["RUF012", "B008"]

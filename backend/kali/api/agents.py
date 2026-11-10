@@ -5,14 +5,16 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from kali.agents.loop import run_agent
 from kali.agents.profiles import PROFILES, get_profile
+from kali.api.auth import auth_service, require_user
 from kali.core.engine import CoreEngine
 from kali.models.base import Message
 from kali.models.errors import ProviderError, ProviderNotFoundError
+from kali.security.auth import User
 from kali.tools.base import ToolRegistry
 
 router = APIRouter(prefix="/v1", tags=["agents"])
@@ -66,9 +68,11 @@ async def list_agents() -> dict:
 
 
 @router.post("/agent/run")
-async def run(body: AgentRunIn, request: Request) -> dict:
+async def run(body: AgentRunIn, request: Request, user: User = Depends(require_user)) -> dict:
     """Запускает агента: модель может вызывать инструменты профиля и получает их результаты."""
     engine = _engine(request)
+    if body.allow_actions:
+        auth_service(request).audit(user.username, "actions_allowed", body.profile)
     tools = _tools(request)
     try:
         profile = get_profile(body.profile)

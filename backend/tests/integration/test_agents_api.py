@@ -101,7 +101,7 @@ def test_unknown_profile_is_rejected():
 # ---- маршруты ----
 
 def _client(tmp_path, provider: FakeProvider) -> TestClient:
-    settings = Settings(environment="test", log_level="WARNING", system_prompt="SYS",
+    settings = Settings(auth_enabled=False, environment="test", log_level="WARNING", system_prompt="SYS",
                         memory_db_path=":memory:", workspace_dir=str(tmp_path / "ws"),
                         sandbox_enabled=False, knowledge_enabled=False)
     registry = ProviderRegistry()

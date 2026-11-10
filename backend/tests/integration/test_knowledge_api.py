@@ -16,7 +16,7 @@ from tests.fakes import FakeEmbedder, FakeProvider
 
 
 def _client(provider: FakeProvider, embedder=None) -> tuple[TestClient, KnowledgeService]:
-    settings = Settings(environment="test", log_level="WARNING", system_prompt="SYS",
+    settings = Settings(auth_enabled=False, environment="test", log_level="WARNING", system_prompt="SYS",
                         memory_db_path=":memory:")
     registry = ProviderRegistry()
     registry.register(provider, default=True)

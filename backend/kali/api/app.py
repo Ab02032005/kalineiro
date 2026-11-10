@@ -10,12 +10,14 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from kali import __version__
 from kali.api.agents import router as agents_router
+from kali.api.auth import require_user
+from kali.api.auth import router as auth_router
 from kali.api.chat import router as chat_router
 from kali.api.files import router as files_router
 from kali.api.knowledge import router as knowledge_router
@@ -33,6 +35,8 @@ from kali.memory.store import SqliteMemoryStore
 from kali.models.openai_compatible import OpenAICompatibleProvider
 from kali.models.registry import ProviderRegistry
 from kali.observability.logging import configure_logging
+from kali.security.auth import AuthService
+from kali.security.ratelimit import RateLimiter
 from kali.tools.base import ToolRegistry
 from kali.tools.builtin import (
     Calculator,
@@ -129,6 +133,7 @@ def create_app(
     memory: MemoryService | None = None,
     knowledge: KnowledgeService | None = None,
     tools: ToolRegistry | None = None,
+    auth: AuthService | None = None,
 ) -> FastAPI:
     """Создаёт приложение. В тестах можно передать свои реестр, память и базу знаний."""
     settings = settings or get_settings()
@@ -136,6 +141,10 @@ def create_app(
     registry = registry if registry is not None else build_registry(settings)
     tools = tools if tools is not None else build_tools(settings)
 
+    owned_auth: AuthService | None = None
+    if auth is None:
+        owned_auth = AuthService(settings.database_path, session_hours=settings.auth_session_hours)
+        auth = owned_auth
     owned_memory_store: SqliteMemoryStore | None = None
     if memory is None:
         owned_memory_store, memory = build_memory(settings)
@@ -150,6 +159,8 @@ def create_app(
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
         await registry.close_all()
+        if owned_auth is not None:
+            owned_auth.close()
         if owned_embedder is not None:
             await owned_embedder.aclose()
         if owned_knowledge_store is not None:
@@ -171,6 +182,8 @@ def create_app(
     app.state.knowledge = knowledge
     app.state.tools = tools
     app.state.workspace = Workspace(Path(settings.workspace_dir))
+    app.state.auth = auth
+    app.state.login_limiter = RateLimiter(settings.login_attempts_per_minute)
     app.state.engine = (
         CoreEngine(
             registry,
@@ -214,6 +227,22 @@ def create_app(
         )
         return response
 
+    @app.middleware("http")
+    async def security_headers(request: Request, call_next):
+        """Заголовки защиты браузера. Данные API нельзя кэшировать."""
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; "
+            "base-uri 'self'; form-action 'self'"
+        )
+        if request.url.path.startswith("/v1/"):
+            response.headers["Cache-Control"] = "no-store"
+        return response
+
     @app.get("/health", tags=["system"])
     async def health() -> dict[str, object]:
         """Проверка работоспособности. Не раскрывает секреты и внутренние пути."""
@@ -228,11 +257,13 @@ def create_app(
             "tools": len(tools.names()),
         }
 
-    app.include_router(chat_router)
-    app.include_router(memory_router)
-    app.include_router(knowledge_router)
-    app.include_router(agents_router)
-    app.include_router(files_router)
+    protected = [Depends(require_user)]
+    app.include_router(auth_router)
+    app.include_router(chat_router, dependencies=protected)
+    app.include_router(memory_router, dependencies=protected)
+    app.include_router(knowledge_router, dependencies=protected)
+    app.include_router(agents_router, dependencies=protected)
+    app.include_router(files_router, dependencies=protected)
     app.include_router(system_router)
     app.include_router(ui_router)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

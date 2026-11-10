@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 
 from kali import __version__
+from kali.api.auth import require_admin, require_user
+from kali.security.auth import User
 from kali.tools.sandbox import docker_available
 
 router = APIRouter(prefix="/v1", tags=["system"])
@@ -30,7 +32,7 @@ PUBLIC_SETTINGS = (
 
 
 @router.get("/stats")
-async def stats(request: Request) -> dict:
+async def stats(request: Request, _: User = Depends(require_user)) -> dict:
     state = request.app.state
     memory = getattr(state, "memory", None)
     knowledge = getattr(state, "knowledge", None)
@@ -47,7 +49,7 @@ async def stats(request: Request) -> dict:
 
 
 @router.get("/admin/status")
-async def admin_status(request: Request) -> dict:
+async def admin_status(request: Request, _: User = Depends(require_admin)) -> dict:
     state = request.app.state
     settings = state.settings
     registry = getattr(state, "registry", None)
