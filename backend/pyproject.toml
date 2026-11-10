@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kali"
-version = "0.6.0"
+version = "0.7.0"
 description = "Kali — модульная AI-платформа с подключаемыми моделями, памятью и инструментами"
 requires-python = ">=3.12"
 dependencies = [

@@ -189,6 +189,14 @@ class SqliteMemoryStore:
             self._conn.commit()
             return cursor.rowcount
 
+    def count_by_kind(self) -> dict[str, int]:
+        """Количество записей по видам памяти."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT kind, COUNT(*) AS n FROM memories GROUP BY kind"
+            ).fetchall()
+        return {row["kind"]: row["n"] for row in rows}
+
     def export_all(self) -> list[MemoryItem]:
         with self._lock:
             rows = self._conn.execute("SELECT * FROM memories ORDER BY id").fetchall()

@@ -94,6 +94,11 @@ class MemoryService:
         """Удаляет все записи (или один вид). Необратимо: вызывать только после подтверждения."""
         return self._store.delete_kinds((kind,) if kind else None)
 
+    def counts(self) -> dict[str, int]:
+        """Сколько записей каждого вида хранится."""
+        by_kind = self._store.count_by_kind()
+        return {kind: by_kind.get(kind, 0) for kind in KINDS}
+
     def export(self) -> dict:
         items = self._store.export_all()
         return {

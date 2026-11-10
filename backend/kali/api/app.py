@@ -12,12 +12,17 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from kali import __version__
 from kali.api.agents import router as agents_router
 from kali.api.chat import router as chat_router
+from kali.api.files import router as files_router
 from kali.api.knowledge import router as knowledge_router
 from kali.api.memory import router as memory_router
+from kali.api.system import router as system_router
+from kali.api.ui import STATIC_DIR
+from kali.api.ui import router as ui_router
 from kali.config.settings import Settings, get_settings
 from kali.core.engine import CoreEngine, EngineLimits
 from kali.knowledge.embeddings import Embedder, OpenAIEmbedder
@@ -165,6 +170,7 @@ def create_app(
     app.state.memory = memory
     app.state.knowledge = knowledge
     app.state.tools = tools
+    app.state.workspace = Workspace(Path(settings.workspace_dir))
     app.state.engine = (
         CoreEngine(
             registry,
@@ -226,4 +232,8 @@ def create_app(
     app.include_router(memory_router)
     app.include_router(knowledge_router)
     app.include_router(agents_router)
+    app.include_router(files_router)
+    app.include_router(system_router)
+    app.include_router(ui_router)
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     return app

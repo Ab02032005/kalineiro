@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#faf9f5">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Kali">
+<title>Kali</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="layout" id="layout">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">Kali</div>
+    <nav class="nav" id="nav">
+      <a href="#/chat" data-route="chat">Чат</a>
+      <a href="#/memory" data-route="memory">Память</a>
+      <a href="#/knowledge" data-route="knowledge">База знаний</a>
+      <a href="#/files" data-route="files">Файлы</a>
+      <a href="#/agents" data-route="agents">Агенты</a>
+      <a href="#/models" data-route="models">Модели</a>
+      <a href="#/dashboard" data-route="dashboard">Панель</a>
+      <a href="#/settings" data-route="settings">Настройки</a>
+      <a href="#/admin" data-route="admin">Администрирование</a>
+    </nav>
+    <div class="sidebar-foot" id="sidebarFoot"></div>
+  </aside>
+  <div class="scrim" id="scrim"></div>
+  <main class="main">
+    <header class="topbar">
+      <button class="icon-btn" id="menuBtn" aria-label="Меню">☰</button>
+      <h1 id="pageTitle">Чат</h1>
+      <span class="status" id="status" title="Состояние сервера"></span>
+    </header>
+    <section class="view" id="view"></section>
+  </main>
+</div>
+<div class="toast" id="toast" hidden></div>
+<script src="/static/app.js"></script>
+</body>
+</html>
